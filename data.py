@@ -264,11 +264,11 @@ def prepare_kfold_splits(
     if stratification_type == 'binary':
         print(f"   Using StratifiedKFold (preserves hate/non-hate ratio)")
         kfold = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=seed)
-        return kfold.split(comments, labels.ravel())  # labels: [N,1] → flatten
+        yield from kfold.split(comments, labels.ravel())  # labels: [N,1] → flatten
     else:
         print(f"   Using basic KFold (no stratification)")
         kfold = KFold(n_splits=num_folds, shuffle=True, random_state=seed)
-        return kfold.split(comments)
+        yield from kfold.split(comments)
 
 
 # =============================================================================
