@@ -107,8 +107,12 @@ python main.py \
     --pipeline kd_prune_quant \
     --dataset_path data/HateSpeech.csv \
     --author_name "Researcher" \
+    --teacher_path "csebuetnlp/banglabert" \
+    --student_path "distilbert-base-multilingual-cased" \
     --teacher_epochs 5 \
     --epochs 10 \
+    --fine_tune_epochs 3 \
+    --batch 32 \
     --prune_method magnitude \
     --prune_sparsity 0.4 \
     --quant_method fp16
