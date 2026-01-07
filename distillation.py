@@ -292,7 +292,8 @@ class StudentModel(nn.Module):
         model_name: str, 
         num_labels: int = 1, 
         dropout: float = 0.1,
-        classifier_hidden_size: int = 256
+        classifier_hidden_size: int = 256,
+        **kwargs
     ):
         """
         Initialize student model.
@@ -305,7 +306,7 @@ class StudentModel(nn.Module):
         """
         super().__init__()
         
-        self.encoder = AutoModel.from_pretrained(model_name)
+        self.encoder = AutoModel.from_pretrained(model_name, **kwargs)
         self.config = AutoConfig.from_pretrained(model_name)
         hidden_size = self.config.hidden_size
         
@@ -366,6 +367,46 @@ class StudentModel(nn.Module):
         }
         with open(os.path.join(save_path, 'student_config.json'), 'w') as f:
             json.dump(config, f, indent=2)
+
+    @classmethod
+    def from_pretrained(cls, load_path: str, device: str = 'cpu', **kwargs) -> 'StudentModel':
+        """
+        Load a pre-trained student model.
+        
+        Args:
+            load_path: Path to saved model
+            device: Device to load on
+            **kwargs: Additional arguments for AutoModel (e.g., quantization_config)
+        """
+        # Check if it's a local path with our format
+        config_path = os.path.join(load_path, 'student_config.json')
+        
+        if os.path.exists(config_path):
+            # Local format
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Pass kwargs (like quantization_config) to constructor
+            model = cls(
+                model_name=os.path.join(load_path, 'encoder'),
+                num_labels=config['num_labels'],
+                classifier_hidden_size=config.get('hidden_size', 768), # Fallback if missing
+                **kwargs
+            )
+            
+            # Load classifier weights
+            # Note: If using INT4, we might need to be careful with device placement
+            # But classifier is small, usually fine on GPU in FP16/FP32
+            classifier_state = torch.load(
+                os.path.join(load_path, 'classifier.pt'),
+                map_location=device
+            )
+            model.classifier.load_state_dict(classifier_state)
+        else:
+            # HuggingFace path
+            model = cls(model_name=load_path, num_labels=5, **kwargs)
+        
+        return model.to(device)
 
 
 # =============================================================================

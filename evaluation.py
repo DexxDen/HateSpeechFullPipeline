@@ -108,6 +108,9 @@ class CompressionStageMetrics:
     train_roc_auc: Optional[float] = None
     train_loss: Optional[float] = None
     
+    # Config
+    config: Optional[Dict] = None
+    
     def to_dict(self) -> Dict:
         return asdict(self)
     
@@ -147,6 +150,14 @@ class CompressionStageMetrics:
         }
         for label, f1 in self.per_label_f1.items():
             result[f'f1_{label}'] = f1
+            
+        # Add config arguments
+        if self.config:
+            for key, value in self.config.items():
+                # Only add simple types (int, float, str, bool)
+                if isinstance(value, (int, float, str, bool, type(None))):
+                    result[f'arg_{key}'] = value
+                    
         return result
     
     def print_summary(self):
@@ -207,7 +218,8 @@ class CompressionEvaluator:
         use_student_input_ids: bool = False,
         extra_metrics: Optional[Dict] = None,
         explore_thresholds: bool = True,
-        thresholds: List[float] = None
+        thresholds: List[float] = None,
+        config: Optional[Dict] = None
     ) -> CompressionStageMetrics:
         """Evaluate a model comprehensively."""
         print(f"\n📊 Evaluating: {stage}")
@@ -355,7 +367,8 @@ class CompressionEvaluator:
             train_f1_non_hate=train_metrics.get('train_f1_non_hate'),
             train_f1_macro=train_metrics.get('train_f1_macro'),
             train_roc_auc=train_metrics.get('train_roc_auc'),
-            train_loss=train_metrics.get('train_loss')
+            train_loss=train_metrics.get('train_loss'),
+            config=config
         )
         
         if stage == 'baseline':
