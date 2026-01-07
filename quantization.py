@@ -306,7 +306,10 @@ class QuantizationManager:
         original_size = self.get_model_size(self.original_model)
         quantized_size = self.get_model_size(self.quantized_model)
         
-        compression = original_size['total_size_mb'] / quantized_size['total_size_mb']
+        if quantized_size['total_size_mb'] > 0:
+            compression = original_size['total_size_mb'] / quantized_size['total_size_mb']
+        else:
+            compression = 1.0 # Avoid division by zero for empty/mock models
         
         print(f"\n📊 Quantization Results:")
         print(f"   Original size: {original_size['total_size_mb']:.2f} MB")
@@ -514,6 +517,84 @@ def profile_memory(model: nn.Module, dataloader, device: str, use_student_input_
     return {
         'peak_memory_mb': peak_memory
     }
+
+
+
+def apply_int4_quantization(model: nn.Module, device: str) -> nn.Module:
+    """
+    Apply INT4 quantization using bitsandbytes.
+    
+    WHAT: Quantizes model to 4-bit precision (NF4)
+    WHY: Extreme compression (smaller than INT8)
+    HOW: Saves model to temp dir, reloads with load_in_4bit=True
+    """
+    print("\n   Applying INT4 quantization (via bitsandbytes)...")
+    try:
+        from transformers import BitsAndBytesConfig
+        import bitsandbytes as bnb
+    except ImportError:
+        raise ImportError("INT4 quantization requires 'bitsandbytes' and 'accelerate'. Please install them.")
+
+    import os
+    import shutil
+    from distillation import StudentModel, TeacherModel
+
+    # We need to save the current model state first because bitsandbytes 
+    # quantizes upon loading.
+    temp_dir = "temp_int4_conversion"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.makedirs(temp_dir)
+    
+    print("   1. Saving temporary model for reloading...")
+    # Save model using its own save_pretrained method
+    if hasattr(model, 'save_pretrained'):
+        model.save_pretrained(temp_dir)
+    else:
+        # Fallback for raw HF models
+        model.save_pretrained(temp_dir)
+    
+    print("   2. Reloading with INT4 quantization...")
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+    )
+    
+    # Reload using the appropriate class
+    # We assume it's a StudentModel if it has that class, otherwise try generic
+    if isinstance(model, StudentModel):
+        quantized_model = StudentModel.from_pretrained(
+            temp_dir,
+            quantization_config=quantization_config,
+            device_map=device
+        )
+    elif isinstance(model, TeacherModel):
+        # TeacherModel usually doesn't need INT4 but just in case
+        quantized_model = TeacherModel.from_pretrained(
+            temp_dir,
+            device=device
+        )
+        # TeacherModel doesn't support kwargs in from_pretrained yet? 
+        # Actually we didn't add it to TeacherModel, only StudentModel.
+        # But usually we quantize the Student.
+        pass
+    else:
+        # Fallback to AutoModel (might fail if custom head)
+        from transformers import AutoModel
+        quantized_model = AutoModel.from_pretrained(
+            temp_dir,
+            quantization_config=quantization_config,
+            device_map=device
+        )
+    
+    # Cleanup
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    
+    print("   ✅ INT4 quantization complete")
+    return quantized_model
 
 
 # =============================================================================

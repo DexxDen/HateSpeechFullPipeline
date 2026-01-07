@@ -73,7 +73,8 @@ from pruning import (
     get_pruner, fine_tune_after_pruning
 )
 from quantization import (
-    QuantizationManager, quantize_model, benchmark_inference_speed
+    QuantizationManager, quantize_model, benchmark_inference_speed,
+    apply_int4_quantization
 )
 from evaluation import (
     CompressionEvaluator, CompressionStageMetrics,
@@ -264,73 +265,7 @@ def push_to_huggingface_hub(model, tokenizer, repo_name, token=None):
     print(f"✅ Model pushed to: https://huggingface.co/{repo_name}")
 
 
-# =============================================================================
-# INT4 QUANTIZATION (NEW!)
-# =============================================================================
 
-def apply_int4_quantization(model, device='cuda'):
-    """
-    Apply INT4 quantization using bitsandbytes library.
-    
-    WHAT: Reduces weights to 4-bit precision (vs 32-bit original)
-    WHY: 8× compression with minimal accuracy loss
-    HOW: Uses bitsandbytes library for 4-bit quantization
-    
-    REQUIREMENTS:
-        pip install bitsandbytes
-        GPU with CUDA support
-    
-    NOTE: INT4 is primarily used for inference, not training.
-    """
-    try:
-        import bitsandbytes as bnb
-        from transformers import BitsAndBytesConfig
-    except ImportError:
-        print("❌ bitsandbytes not installed!")
-        print("   Install: pip install bitsandbytes")
-        print("   Falling back to INT8...")
-        return apply_int8_quantization(model)
-    
-    print("\n   Applying INT4 quantization (bitsandbytes)...")
-    
-    # Create quantization config
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,  # Nested quantization for more compression
-        bnb_4bit_quant_type="nf4"  # Normalized float 4-bit
-    )
-    
-    # For existing model, we need to convert Linear layers
-    def replace_linear_with_4bit(model):
-        for name, module in model.named_children():
-            if isinstance(module, nn.Linear):
-                # Create 4-bit linear layer
-                new_layer = bnb.nn.Linear4bit(
-                    module.in_features,
-                    module.out_features,
-                    bias=module.bias is not None,
-                    compute_dtype=torch.float16,
-                    quant_type="nf4"
-                )
-                # Copy weights
-                new_layer.weight = bnb.nn.Params4bit(
-                    module.weight.data,
-                    requires_grad=False,
-                    quant_type="nf4"
-                )
-                if module.bias is not None:
-                    new_layer.bias = nn.Parameter(module.bias.data)
-                setattr(model, name, new_layer)
-            else:
-                replace_linear_with_4bit(module)
-        return model
-    
-    model = replace_linear_with_4bit(model)
-    model = model.to(device)
-    
-    print("   ✅ INT4 quantization applied")
-    return model
 
 
 def apply_int8_quantization(model):
@@ -810,9 +745,9 @@ def run_pruning(config, model, tokenized_data, train_idx, val_idx, device, model
     else:
         raise ValueError(f"Unknown pruning method: {config.prune_method}")
     
-    # Make pruning permanent
-    if hasattr(pruner, 'make_pruning_permanent'):
-        pruner.make_pruning_permanent()
+    # DO NOT make pruning permanent yet! We want to fine-tune with masks.
+    # if hasattr(pruner, 'make_pruning_permanent'):
+    #     pruner.make_pruning_permanent()
     
     # Get F1 after pruning (before fine-tuning)
     model.eval()
@@ -864,6 +799,10 @@ def run_pruning(config, model, tokenized_data, train_idx, val_idx, device, model
         f1_after_finetune = f1_score(all_labels, all_preds, average='binary')
         print(f"\n   F1 after fine-tuning: {f1_after_finetune:.4f}")
         print(f"   Recovery: {(f1_after_finetune - f1_after_prune)*100:.2f}%")
+    
+    # Make pruning permanent AFTER fine-tuning
+    if hasattr(pruner, 'make_pruning_permanent'):
+        pruner.make_pruning_permanent()
     
     final_sparsity = pruner.get_sparsity()
     print(f"\n   ✅ Pruning complete!")
@@ -1006,6 +945,9 @@ def run_compression_pipeline(config):
         batch_size=config.batch, num_workers=2
     )
     
+    # Create config dict for metrics
+    config_dict = vars(config)
+    
     # ==========================================================================
     # PHASE 1: Teacher
     # ==========================================================================
@@ -1014,8 +956,9 @@ def run_compression_pipeline(config):
     )
     
     baseline_metrics = evaluator.evaluate_model(
-        teacher, val_loader, device, stage='baseline',
-        extra_metrics=teacher_metrics
+        teacher.model, val_loader, device, stage='teacher_baseline',
+        extra_metrics=teacher_metrics,
+        config=config_dict
     )
     baseline_metrics.print_summary()
     all_metrics.append(baseline_metrics)
@@ -1038,9 +981,10 @@ def run_compression_pipeline(config):
         )
         
         kd_metrics = evaluator.evaluate_model(
-            student, val_loader, device, stage='after_kd',
+            student.model, val_loader, device, stage='after_kd',
             use_student_input_ids=True,
-            extra_metrics=kd_train_metrics
+            extra_metrics=kd_train_metrics, # Assuming kd_train_metrics is the correct value here, not trainer.evaluate(val_loader)
+            config=config_dict
         )
         kd_metrics.print_summary()
         all_metrics.append(kd_metrics)
@@ -1069,7 +1013,8 @@ def run_compression_pipeline(config):
         prune_metrics = evaluator.evaluate_model(
             pruned_model, val_loader, device, stage='after_pruning',
             use_student_input_ids=True,
-            extra_metrics=prune_train_metrics
+            extra_metrics=prune_train_metrics, # Assuming prune_train_metrics is the correct value here, not best_metrics
+            config=config_dict
         )
         prune_metrics.print_summary()
         all_metrics.append(prune_metrics)
@@ -1098,7 +1043,8 @@ def run_compression_pipeline(config):
         
         quant_metrics = evaluator.evaluate_model(
             quantized_model, quant_loader, quant_device, stage='after_quantization',
-            use_student_input_ids=True
+            use_student_input_ids=True,
+            config=config_dict
         )
         quant_metrics.print_summary()
         all_metrics.append(quant_metrics)
