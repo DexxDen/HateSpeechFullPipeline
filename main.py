@@ -736,7 +736,13 @@ def run_pruning(config, model, tokenized_data, train_idx, val_idx, device, model
     all_preds, all_labels = [], []
     with torch.no_grad():
         for batch in val_loader:
-            outputs = model(batch['input_ids'].to(device), batch['attention_mask'].to(device))
+            if 'student_input_ids' in batch:
+                input_ids = batch['student_input_ids'].to(device)
+                attention_mask = batch['student_attention_mask'].to(device)
+            else:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+            outputs = model(input_ids, attention_mask)
             logits = outputs['logits'] if isinstance(outputs, dict) else outputs
             preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
             all_preds.extend(preds)
@@ -813,7 +819,13 @@ def run_pruning(config, model, tokenized_data, train_idx, val_idx, device, model
     all_preds, all_labels = [], []
     with torch.no_grad():
         for batch in val_loader:
-            outputs = model(batch['input_ids'].to(device), batch['attention_mask'].to(device))
+            if 'student_input_ids' in batch:
+                input_ids = batch['student_input_ids'].to(device)
+                attention_mask = batch['student_attention_mask'].to(device)
+            else:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+            outputs = model(input_ids, attention_mask)
             logits = outputs['logits'] if isinstance(outputs, dict) else outputs
             preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
             all_preds.extend(preds)
@@ -837,7 +849,13 @@ def run_pruning(config, model, tokenized_data, train_idx, val_idx, device, model
         all_preds, all_labels = [], []
         with torch.no_grad():
             for batch in val_loader:
-                outputs = model(batch['input_ids'].to(device), batch['attention_mask'].to(device))
+                if 'student_input_ids' in batch:
+                    input_ids = batch['student_input_ids'].to(device)
+                    attention_mask = batch['student_attention_mask'].to(device)
+                else:
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                outputs = model(input_ids, attention_mask)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                 preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
                 all_preds.extend(preds)
